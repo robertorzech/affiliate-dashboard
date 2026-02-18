@@ -23,14 +23,19 @@ Unified dashboard do monitorowania prowizji i przychodów z trzech głównych pl
 
 ### Partnerize API
 - Zaloguj się na Partnerize
-- Przejdź do: **Account → API Keys**
-- Skopiuj swój **User API Key**
+- Przejdź do: **Settings** (lub kliknij logo Partnerize → Account Settings)
+- Znajdziesz tam:
+  - **Publisher ID** (widoczny w sekcji Settings)
+  - **Application Key** (w sekcji Your Account)
+  - **User API Key** (w sekcji Your Account)
+- Wszystkie 3 klucze są wymagane!
 
 ### Zeropark API
-- Skontaktuj się z **Zeropark Publisher Team**
-- Otrzymasz:
-  - **API Token**
-  - **Domainer ID**
+- Zaloguj się na panel Zeropark
+- Przejdź do: **Dashboard → My Account → Security**
+- Kliknij **"Create new API access token"**
+- Skopiuj wygenerowany **API Token**
+- Tylko API Token jest wymagany!
 
 ### Awin API
 - Zaloguj się na Awin
@@ -58,14 +63,14 @@ Unified dashboard do monitorowania prowizji i przychodów z trzech głównych pl
 - Log zmian
 
 ### Zeropark
-- Przychód wczoraj (Revenue, Sold Visits, Avg CPM)
-- Przychód w bieżącym miesiącu (suma)
-- Tabela z dziennymi statystykami:
-  - Requested Visits
-  - Accepted Visits
-  - Sold Visits
-  - Revenue
-  - Average CPM
+- Payout (przychód) wczoraj
+- Payout w bieżącym miesiącu  
+- Tabela podsumowująca:
+  - Redirects
+  - Available Visits
+  - Conversions
+  - Payout
+  - Profit
 
 ### Awin
 - Prowizje wczoraj
