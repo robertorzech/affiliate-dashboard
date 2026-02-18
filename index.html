@@ -735,9 +735,21 @@
     <div class="section-label">// Partnerize API</div>
 
     <div class="form-group">
+      <label>Application Key</label>
+      <input type="text" id="pz-app-key" placeholder="Twój Application Key" autocomplete="off">
+      <div class="hint">Znajdziesz w Settings → Your Account</div>
+    </div>
+
+    <div class="form-group">
       <label>User API Key</label>
-      <input type="password" id="api-key" placeholder="Twój klucz API Partnerize" autocomplete="off">
-      <div class="hint">Znajdziesz w Partnerize → Account → API Keys</div>
+      <input type="password" id="api-key" placeholder="Twój User API Key" autocomplete="off">
+      <div class="hint">Znajdziesz w Settings → Your Account</div>
+    </div>
+
+    <div class="form-group">
+      <label>Publisher ID</label>
+      <input type="text" id="pz-publisher-id" placeholder="Twój Publisher ID">
+      <div class="hint">Znajdziesz w Settings</div>
     </div>
 
     <div class="form-group">
@@ -751,13 +763,7 @@
     <div class="form-group">
       <label>API Token</label>
       <input type="password" id="zp-token" placeholder="Twój Zeropark API token" autocomplete="off">
-      <div class="hint">Dostępne od Zeropark Publisher Team</div>
-    </div>
-
-    <div class="form-group">
-      <label>Domainer ID</label>
-      <input type="text" id="zp-domainer-id" placeholder="Twój Domainer ID">
-      <div class="hint">Dostępne od Zeropark Publisher Team</div>
+      <div class="hint">Dashboard → My Account → Security → Create API access token</div>
     </div>
 
     <hr class="section-divider">
@@ -821,12 +827,22 @@
       <div class="section-label">// Ustawienia API</div>
       <div class="settings-row">
         <div class="form-group">
-          <label>Zeropark API Token</label>
-          <input type="password" id="s-zp-token">
+          <label>Partnerize App Key</label>
+          <input type="text" id="s-pz-app-key">
         </div>
         <div class="form-group">
-          <label>Zeropark Domainer ID</label>
-          <input type="text" id="s-zp-did">
+          <label>Partnerize User API Key</label>
+          <input type="password" id="s-pz-api-key">
+        </div>
+        <div class="form-group">
+          <label>Partnerize Publisher ID</label>
+          <input type="text" id="s-pz-pub-id">
+        </div>
+      </div>
+      <div class="settings-row">
+        <div class="form-group">
+          <label>Zeropark API Token</label>
+          <input type="password" id="s-zp-token">
         </div>
       </div>
       <div class="settings-row">
@@ -947,18 +963,18 @@
 
     <!-- Details Table -->
     <div class="section-header">
-      <div class="section-title">Szczegóły miesięczne</div>
+      <div class="section-title">Podsumowanie</div>
     </div>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Data</th>
-            <th>Requested Visits</th>
-            <th>Accepted</th>
-            <th>Sold Visits</th>
-            <th>Revenue</th>
-            <th>Avg CPM</th>
+            <th>Okres</th>
+            <th>Redirects</th>
+            <th>Available Visits</th>
+            <th>Conversions</th>
+            <th>Payout (€)</th>
+            <th>Profit (€)</th>
           </tr>
         </thead>
         <tbody id="zp-detail-table">
@@ -1062,7 +1078,7 @@
 // ══════════════════════════════════════════════════════════
 const PROXY = 'https://corsproxy.io/?';
 const BASE  = 'https://api.partnerize.com';
-const ZP_BASE = 'https://panel.zeropark.com/panel/reports/byfeed';
+const ZP_BASE = 'https://panel.zeropark.com/api';
 const AWIN_BASE = 'https://api.awin.com';
 
 let config = {};
@@ -1070,7 +1086,7 @@ let prevData  = null;
 let notifLog  = [];
 let timer     = null;
 let pushReady = false;
-let zpData    = { yesterday: null, month: [] };
+let zpData    = { yesterday: null, month: null };
 let awinData  = { yesterday: [], month: [], byStatus: {}, byAdvertiser: {} };
 
 // ── Load saved config ────────────────────────────────────
@@ -1102,12 +1118,16 @@ function saveLog() {
 window.addEventListener('load', async () => {
   loadLog();
   requestPushPermission();
-  const hasAnyApi = config.apiKey || (config.zpToken && config.zpDid) || (config.awinToken && config.awinPubId);
+  const hasPz = config.pzAppKey && config.apiKey && config.pzPubId;
+  const hasZp = config.zpToken;
+  const hasAwin = config.awinToken && config.awinPubId;
+  const hasAnyApi = hasPz || hasZp || hasAwin;
+  
   if (loadConfig() && hasAnyApi) {
     showDashboard();
-    if (config.apiKey) await fetchData(false);
-    if (config.zpToken && config.zpDid) await fetchZeroparkData(false);
-    if (config.awinToken && config.awinPubId) await fetchAwinData(false);
+    if (hasPz) await fetchData(false);
+    if (hasZp) await fetchZeroparkData(false);
+    if (hasAwin) await fetchAwinData(false);
   }
 });
 
@@ -1163,8 +1183,10 @@ async function sendEmail(changes) {
 // API CALLS
 // ══════════════════════════════════════════════════════════
 async function apiGet(endpoint) {
+  // Partnerize uses HTTP Basic Auth: application_key:user_api_key
+  const authString = config.pzAppKey + ':' + config.apiKey;
   const headers = {
-    'Authorization': 'Basic ' + btoa(config.apiKey + ':'),
+    'Authorization': 'Basic ' + btoa(authString),
     'Accept': 'application/json'
   };
   const url = PROXY + encodeURIComponent(BASE + endpoint);
@@ -1178,45 +1200,53 @@ async function apiGet(endpoint) {
 
 // Fetch commission summary grouped by status
 async function fetchCommissionSummary() {
-  // Try publisher summary endpoint
-  let endpoint = '/v1/partner/commissions/summary';
-  if (config.campaignId) endpoint += '?campaign_id=' + config.campaignId;
+  // Use conversions endpoint for publisher
+  let endpoint = `/v1/partner/${config.pzPubId}/conversions`;
+  
+  // Get last 30 days
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - 30);
+  
+  endpoint += `?start_date=${startDate.toISOString().split('T')[0]}`;
+  endpoint += `&end_date=${endDate.toISOString().split('T')[0]}`;
+  
+  if (config.campaignId) endpoint += '&campaign_id=' + config.campaignId;
 
   try {
-    return await apiGet(endpoint);
+    const data = await apiGet(endpoint);
+    return aggregateConversions(data);
   } catch(e) {
-    // Fallback: try listing commissions
-    let ep2 = '/v1/partner/commissions?limit=500';
-    if (config.campaignId) ep2 += '&campaign_id=' + config.campaignId;
-    const raw = await apiGet(ep2);
-    return aggregateCommissions(raw);
+    throw e;
   }
 }
 
-function aggregateCommissions(raw) {
-  // Build a summary from raw commission list
-  const commissions = raw.commissions || raw.data || raw.results || [];
+function aggregateConversions(raw) {
+  // Build a summary from conversions list
+  const conversions = raw.conversions || raw.data || raw.items || [];
   const map = {};
-  for (const c of commissions) {
-    const status = c.status || c.commission_status || 'unknown';
-    const currency = c.currency || c.publisher_currency || 'GBP';
+  
+  for (const c of conversions) {
+    const status = c.conversion_status || c.status || 'unknown';
+    const currency = c.publisher_commission_currency || c.currency || 'GBP';
     const key = status + '_' + currency;
     if (!map[key]) map[key] = { status, currency, count: 0, commission: 0, sale: 0 };
     map[key].count++;
-    map[key].commission += parseFloat(c.publisher_commission || c.commission_value || 0);
-    map[key].sale += parseFloat(c.sale_value || c.value || 0);
+    map[key].commission += parseFloat(c.publisher_commission || c.commission || 0);
+    map[key].sale += parseFloat(c.sale_value || c.conversion_value || 0);
   }
-  return { items: Object.values(map), source: 'aggregated' };
+  return { items: Object.values(map), source: 'conversions' };
 }
 
 // ══════════════════════════════════════════════════════════
 // CONNECT & FETCH
 // ══════════════════════════════════════════════════════════
 async function connectAPI() {
+  const pzAppKey  = document.getElementById('pz-app-key').value.trim();
   const apiKey     = document.getElementById('api-key').value.trim();
+  const pzPubId    = document.getElementById('pz-publisher-id').value.trim();
   const campaignId = document.getElementById('campaign-id').value.trim();
   const zpToken    = document.getElementById('zp-token').value.trim();
-  const zpDid      = document.getElementById('zp-domainer-id').value.trim();
   const awinToken  = document.getElementById('awin-token').value.trim();
   const awinPubId  = document.getElementById('awin-publisher-id').value.trim();
   const emailjsService  = document.getElementById('emailjs-service').value.trim();
@@ -1230,15 +1260,15 @@ async function connectAPI() {
   }
 
   saveConfig({ 
-    apiKey, campaignId, zpToken, zpDid, awinToken, awinPubId,
+    pzAppKey, apiKey, pzPubId, campaignId, zpToken, awinToken, awinPubId,
     emailjsService, emailjsTemplate, emailjsPubkey, notifyEmail 
   });
   initEmailJS();
 
   showLoading(true);
   try {
-    if (apiKey) await fetchData(false);
-    if (zpToken && zpDid) await fetchZeroparkData(false);
+    if (pzAppKey && apiKey && pzPubId) await fetchData(false);
+    if (zpToken) await fetchZeroparkData(false);
     if (awinToken && awinPubId) await fetchAwinData(false);
     showDashboard();
     requestPushPermission();
@@ -1503,33 +1533,19 @@ function changeInterval() {
 // ZEROPARK API
 // ══════════════════════════════════════════════════════════
 async function fetchZeroparkData(manual = false) {
-  if (!config.zpToken || !config.zpDid) return;
+  if (!config.zpToken) return;
   
   showError('zp-error', '');
   
   try {
-    // Get yesterday's date
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = formatDate(yesterday);
-    
-    // Get current month date range
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthDates = [];
-    for (let d = new Date(monthStart); d <= now; d.setDate(d.getDate() + 1)) {
-      monthDates.push(formatDate(new Date(d)));
-    }
-    
     // Fetch yesterday
-    const yesterdayData = await fetchZeroparkDate(yesterdayStr);
+    const yesterdayData = await fetchZeroparkInterval('YESTERDAY');
     
-    // Fetch month data (parallel requests)
-    const monthPromises = monthDates.map(date => fetchZeroparkDate(date));
-    const monthResults = await Promise.all(monthPromises);
+    // Fetch this month
+    const monthData = await fetchZeroparkInterval('THIS_MONTH');
     
     zpData.yesterday = yesterdayData;
-    zpData.month = monthResults.filter(r => r !== null);
+    zpData.month = monthData;
     
     renderZeroparkData();
     
@@ -1544,42 +1560,37 @@ async function fetchZeroparkData(manual = false) {
   }
 }
 
-async function fetchZeroparkDate(date) {
-  const url = `${ZP_BASE}?token=${config.zpToken}&did=${config.zpDid}&date=${date}`;
+async function fetchZeroparkInterval(interval) {
+  const url = `${ZP_BASE}/stats/campaign/all?interval=${interval}&page=0&limit=1`;
   const proxyUrl = PROXY + encodeURIComponent(url);
   
   try {
-    const res = await fetch(proxyUrl);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const res = await fetch(proxyUrl, {
+      headers: {
+        'api-token': config.zpToken,
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`HTTP ${res.status}: ${txt.substring(0,200)}`);
+    }
     
     const data = await res.json();
     
-    // Sum up totals from all rows
-    const rows = data.data || data.rows || [];
-    let total = {
-      date,
-      requestedVisits: 0,
-      accepted: 0,
-      soldVisits: 0,
-      revenue: 0,
-      avgCpm: 0
+    // Return summary data
+    return {
+      spent: data.summary?.spent || 0,
+      payout: data.summary?.payout || 0,
+      profit: data.summary?.profit || 0,
+      redirects: data.summary?.redirects || 0,
+      conversions: data.summary?.conversions || 0,
+      availableVisits: data.summary?.availableVisits || 0
     };
-    
-    for (const row of rows) {
-      total.requestedVisits += parseFloat(row.requested_visits || row.received_visits || 0);
-      total.accepted += parseFloat(row.accepted || row.sellable_visits || 0);
-      total.soldVisits += parseFloat(row.sold_visits || 0);
-      total.revenue += parseFloat(row.revenue || row.payout || 0);
-    }
-    
-    if (total.soldVisits > 0) {
-      total.avgCpm = (total.revenue / total.soldVisits) * 1000;
-    }
-    
-    return total;
   } catch(e) {
-    console.warn('Failed to fetch Zeropark data for', date, e);
-    return null;
+    console.warn('Failed to fetch Zeropark data for', interval, e);
+    throw e;
   }
 }
 
@@ -1588,39 +1599,40 @@ function renderZeroparkData() {
   if (zpData.yesterday) {
     const y = zpData.yesterday;
     document.getElementById('zp-yesterday-revenue').textContent = 
-      fmtMoney(y.revenue);
+      fmtMoney(y.payout);
     document.getElementById('zp-yesterday-meta').textContent = 
-      `${y.soldVisits.toLocaleString('pl-PL')} sold visits • ${fmtMoney(y.avgCpm)} CPM`;
+      `${y.conversions} conversions • ${y.redirects.toLocaleString('pl-PL')} redirects`;
   } else {
     document.getElementById('zp-yesterday-revenue').textContent = '€0.00';
     document.getElementById('zp-yesterday-meta').textContent = 'Brak danych';
   }
   
   // Month stats
-  const monthRevenue = zpData.month.reduce((sum, d) => sum + d.revenue, 0);
-  const monthVisits = zpData.month.reduce((sum, d) => sum + d.soldVisits, 0);
-  const monthCpm = monthVisits > 0 ? (monthRevenue / monthVisits) * 1000 : 0;
-  
-  document.getElementById('zp-month-revenue').textContent = 
-    fmtMoney(monthRevenue);
-  document.getElementById('zp-month-meta').textContent = 
-    `${monthVisits.toLocaleString('pl-PL')} sold visits • ${fmtMoney(monthCpm)} avg CPM`;
-  
-  // Table
-  if (zpData.month.length === 0) {
-    document.getElementById('zp-detail-table').innerHTML = 
-      '<tr><td colspan="6" class="empty-state">Brak danych</td></tr>';
-    return;
+  if (zpData.month) {
+    const m = zpData.month;
+    document.getElementById('zp-month-revenue').textContent = 
+      fmtMoney(m.payout);
+    document.getElementById('zp-month-meta').textContent = 
+      `${m.conversions} conversions • €${m.spent.toFixed(2)} spent • €${m.profit.toFixed(2)} profit`;
+  } else {
+    document.getElementById('zp-month-revenue').textContent = '€0.00';
+    document.getElementById('zp-month-meta').textContent = 'Brak danych';
   }
   
-  const html = zpData.month.slice().reverse().map(d => `
+  // Table with detailed breakdown
+  const tableData = [
+    { label: 'Wczoraj', ...zpData.yesterday },
+    { label: 'Ten miesiąc', ...zpData.month }
+  ];
+  
+  const html = tableData.map(d => `
     <tr>
-      <td>${formatDatePL(d.date)}</td>
-      <td>${Math.round(d.requestedVisits).toLocaleString('pl-PL')}</td>
-      <td>${Math.round(d.accepted).toLocaleString('pl-PL')}</td>
-      <td>${Math.round(d.soldVisits).toLocaleString('pl-PL')}</td>
-      <td><b>${fmtMoney(d.revenue)}</b></td>
-      <td>${fmtMoney(d.avgCpm)}</td>
+      <td><b>${d.label}</b></td>
+      <td>${d.redirects?.toLocaleString('pl-PL') || '0'}</td>
+      <td>${d.availableVisits?.toLocaleString('pl-PL') || '0'}</td>
+      <td>${d.conversions?.toLocaleString('pl-PL') || '0'}</td>
+      <td><b>€${(d.payout || 0).toFixed(2)}</b></td>
+      <td>${d.profit !== undefined ? '€' + d.profit.toFixed(2) : '—'}</td>
     </tr>
   `).join('');
   
@@ -1899,8 +1911,10 @@ function showDashboard() {
   if (saved) prevData = saved;
 
   // populate settings drawer
+  document.getElementById('s-pz-app-key').value       = config.pzAppKey || '';
+  document.getElementById('s-pz-api-key').value       = config.apiKey || '';
+  document.getElementById('s-pz-pub-id').value        = config.pzPubId || '';
   document.getElementById('s-zp-token').value         = config.zpToken || '';
-  document.getElementById('s-zp-did').value           = config.zpDid || '';
   document.getElementById('s-awin-token').value       = config.awinToken || '';
   document.getElementById('s-awin-pubid').value       = config.awinPubId || '';
   document.getElementById('s-emailjs-service').value  = config.emailjsService || '';
@@ -1908,12 +1922,13 @@ function showDashboard() {
   document.getElementById('s-emailjs-pubkey').value   = config.emailjsPubkey || '';
   document.getElementById('s-notify-email').value     = config.notifyEmail || '';
   
-  // Load Zeropark data if configured
-  if (config.zpToken && config.zpDid) {
+  // Load data if configured
+  if (config.pzAppKey && config.apiKey && config.pzPubId) {
+    fetchData(false);
+  }
+  if (config.zpToken) {
     fetchZeroparkData(false);
   }
-  
-  // Load Awin data if configured
   if (config.awinToken && config.awinPubId) {
     fetchAwinData(false);
   }
@@ -1925,8 +1940,10 @@ function openSettings() {
 
 function saveSettings() {
   saveConfig({
+    pzAppKey:        document.getElementById('s-pz-app-key').value.trim(),
+    apiKey:          document.getElementById('s-pz-api-key').value.trim(),
+    pzPubId:         document.getElementById('s-pz-pub-id').value.trim(),
     zpToken:         document.getElementById('s-zp-token').value.trim(),
-    zpDid:           document.getElementById('s-zp-did').value.trim(),
     awinToken:       document.getElementById('s-awin-token').value.trim(),
     awinPubId:       document.getElementById('s-awin-pubid').value.trim(),
     emailjsService:  document.getElementById('s-emailjs-service').value.trim(),
@@ -1939,7 +1956,10 @@ function saveSettings() {
   showToast('Ustawienia zapisane');
   
   // Reload data if credentials changed
-  if (config.zpToken && config.zpDid) {
+  if (config.pzAppKey && config.apiKey && config.pzPubId) {
+    fetchData(false);
+  }
+  if (config.zpToken) {
     fetchZeroparkData(false);
   }
   if (config.awinToken && config.awinPubId) {
